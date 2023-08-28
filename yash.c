@@ -1,5 +1,9 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <readline/readline.h>
+#include <readline/history.h>
+#include <dirent.h>
 
 struct job
 {
@@ -9,13 +13,22 @@ struct job
     char command[];
 };
 
+unsigned char *command;
+char *token;
+
 int main()
 {
     while (1)
     {
-        printf("# ");
-        char word[20];
-        scanf("%s", word);
+        command = readline("# ");
+        if (strlen(command) > 0)
+        {
+            add_history(command);
+        }
+        if (!strcmp(command, "ls"))
+        {
+            ls_func();
+        }
     }
 
     return 0;
@@ -33,10 +46,24 @@ int jobs_func()
     return 0;
 }
 
-int ls_func()
+void ls_func()
 {
+    DIR *directory;
+    struct dirent *dir;
+    directory = opendir(".");
 
-    return 0;
+    if (directory)
+    {
+        while ((dir = readdir(directory)) != NULL)
+        {
+            if (strcmp(dir->d_name, ".") != 0 && strcmp(dir->d_name, "..") != 0 && dir->d_name[0] != '.') // skip over [. , .. , hidden files (start with .)]
+            {
+                printf("%s ", dir->d_name);
+            }
+        }
+        printf("\n");
+        closedir(directory);
+    }
 }
 int pwd_func()
 {
