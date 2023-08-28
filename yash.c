@@ -4,6 +4,8 @@
 #include <readline/readline.h>
 #include <readline/history.h>
 #include <dirent.h>
+#include <unistd.h>
+#include <linux/limits.h>
 
 struct job
 {
@@ -28,6 +30,10 @@ int main()
         if (!strcmp(command, "ls"))
         {
             ls_func();
+        }
+        if (!strcmp(command, "pwd"))
+        {
+            pwd_func();
         }
     }
 
@@ -65,10 +71,11 @@ void ls_func()
         closedir(directory);
     }
 }
-int pwd_func()
+void pwd_func()
 {
-
-    return 0;
+    char working_directory[PATH_MAX];
+    getcwd(working_directory, sizeof(working_directory));
+    printf("%s\n ", working_directory);
 }
 int cat_func()
 {
