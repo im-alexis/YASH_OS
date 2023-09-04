@@ -3,17 +3,17 @@
 #include <string.h>
 #include <readline/readline.h>
 #include <readline/history.h>
-#include <dirent.h>
 #include <unistd.h>
-#include <linux/limits.h>
+#include <fcntl.h>
 
-struct job
+struct Job
 {
-    int id;     // unique identifier for the job 0 to Max
+    int pid;    // unique identifier for the job 0 to Max
     int ground; // like background or foreground
     int status; // 0 stopped or 1 running
-    char command[];
+    char *command;
 };
+typedef struct Job Job;
 
 int main()
 {
@@ -42,20 +42,77 @@ int main()
 void process_command(char *cmd)
 {
     char *cmd_arr[10] = {NULL};
-    char *token, *the_rest;
+    char *token, *the_rest, *redirect_file;
     the_rest = cmd;
+    int rdirect_flg = 4; // 0 (<) from another file, 1 (>) to another file , 2 (2>) erro, 3 (|) piping, 4 no redirect
     int i = 0;
+    int redirect_token_index = -1;
+    int redirect_fd;
+
     while ((token = strtok_r(the_rest, " ", &the_rest)))
     {
-        cmd_arr[i] = token;
+        if (notFileRedirectOrPipe(token) && i != redirect_token_index) // check to see if no pipe symbol and no file redirection
+        {
+            cmd_arr[i] = token;
+        }
+        else
+        {
+            if (!strcmp(token, "<") && redirect_token_index == -1)
+            {
+                rdirect_flg = 0;
+                redirect_token_index = i + 1;
+            }
+            else if (!strcmp(token, ">") && redirect_token_index == -1)
+            {
+                rdirect_flg = 1;
+                redirect_token_index = i + 1;
+            }
+            else if (!strcmp(token, "2>") && redirect_token_index == -1)
+            {
+                rdirect_flg = 2;
+                redirect_token_index = i + 1;
+            }
+            else if (redirect_token_index == i && notFileRedirectOrPipe(token))
+            {
+                redirect_file = token;
+            }
+        }
+
         i++;
     }
-    if (isValidCMD(cmd_arr[0]))
+    if (isValidExecCmd(cmd_arr[0]))
     {
         __pid_t pid = fork();
 
         if (pid == 0)
         {
+            if (rdirect_flg == 1)
+            {
+                redirect_fd = open(redirect_file, O_CREAT | O_TRUNC | O_WRONLY, 0600);
+                dup2(redirect_fd, STDOUT_FILENO);
+                close(redirect_fd);
+            }
+            if (rdirect_flg == 0)
+            {
+                redirect_fd = open(redirect_file, O_RDONLY);
+                if (redirect_fd != -1)
+                {
+                    dup2(redirect_fd, STDIN_FILENO);
+                    close(redirect_fd);
+                }
+                else
+                {
+                    printf("The file does not exist");
+                }
+            }
+            if (rdirect_flg == 2)
+            {
+                redirect_fd = open(redirect_file, O_CREAT | O_TRUNC | O_WRONLY);
+
+                dup2(redirect_fd, STDERR_FILENO);
+                close(redirect_fd);
+                printf("The file does not exist");
+            }
             // child process
             if (execvp(cmd_arr[0], cmd_arr) == -1)
             {
@@ -71,11 +128,14 @@ void process_command(char *cmd)
             }
         }
     }
+    else
+    {
+    }
 }
 
-int isValidCMD(char *cmd_tok)
+int isValidExecCmd(char *cmd_tok)
 {
-    if (!strcmp(cmd_tok, "ls") || !strcmp(cmd_tok, "cat") || !strcmp(cmd_tok, "echo") || !strcmp(cmd_tok, "time") || !strcmp(cmd_tok, "pwd") || !strcmp(cmd_tok, "jobs") || !strcmp(cmd_tok, "grep"))
+    if (!strcmp(cmd_tok, "ls") || !strcmp(cmd_tok, "cat") || !strcmp(cmd_tok, "echo") || !strcmp(cmd_tok, "time") || !strcmp(cmd_tok, "pwd") || !strcmp(cmd_tok, "grep") || !strcmp(cmd_tok, "sleep"))
     {
         return 1;
     }
@@ -83,51 +143,11 @@ int isValidCMD(char *cmd_tok)
     return 0;
 }
 
-void echo_func()
+int notFileRedirectOrPipe(char *token)
 {
-
-    return 0;
-}
-void time_func()
-{
-
-    return 0;
-}
-
-int jobs_func()
-{
-
-    return 0;
-}
-
-void ls_func(int mod) // 0 - no modifier | 1 - (-a) | 2 - (-l)
-{
-    DIR *directory;
-    struct dirent *dir;
-    directory = opendir(".");
-
-    if (directory)
+    if (strcmp(token, ">") && strcmp(token, "<") && strcmp(token, "2>") && strcmp(token, "|"))
     {
-        while ((dir = readdir(directory)) != NULL)
-        {
-
-            if (strcmp(dir->d_name, ".") != 0 && strcmp(dir->d_name, "..") != 0 && dir->d_name[0] != '.' && mod == 0) // skip over [. , .. , hidden files (start with .)]
-            {
-                printf("%s ", dir->d_name);
-            }
-        }
-        printf("\n");
-        closedir(directory);
+        return 1;
     }
-}
-void pwd_func()
-{
-    char working_directory[PATH_MAX];                     // creates a buffer for the string to go into
-    getcwd(working_directory, sizeof(working_directory)); // fills the buffer with the current working directotry
-    printf("%s\n ", working_directory);                   // outputs to the console
-}
-int cat_func()
-{
-
     return 0;
 }

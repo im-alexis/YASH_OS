@@ -5,4 +5,4 @@ debug: yash.c yash.h
 clean:
 	rm yash
 cdebug:
-	rm a.out
+	rm a.out yash.h.gch
