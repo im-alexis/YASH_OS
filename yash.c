@@ -6,6 +6,14 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <sys/wait.h>
+
+// volatile sig_atomic_t sigquit_received = 0;
+// int fg_available = 1;
+// int place_holder = 1; // this is a place holder for a terminal_kill_signal
+// int parent_pid;
+
+int wstatus;
 
 typedef struct Command
 {
@@ -26,46 +34,50 @@ typedef struct Job
 
 void handle_signal(int signal)
 {
-    if (signal == SIGQUIT)
+    switch (signal)
     {
-        printf("Leaving");
+    case SIGCHLD:
+        // note that the last argument is important for the wait to work
+        // waitpid(-1, &wstatus, WNOHANG);
+        break;
+    case SIGQUIT:
         exit(0);
+    case SIGINT:
+        write(STDOUT_FILENO, "\n", 2);
+        break;
+    case SIGTSTP:
+        write(STDOUT_FILENO, "\n", 2);
+        break;
     }
-    else if (signal == SIGINT)
-    {
-        printf("\nCtrl-c was pressed");
-    }
-    else if (signal == SIGTSTP)
-    {
-        printf("\nCtrl-z was pressed");
-    }
+
+    return;
 }
 
 int main()
 {
     char *command;
+    // parent_pid = getpid();
 
-    int fg_available = 1;
-    int place_holder = 1; // this is a place holder for a terminal_kill_signal
+    // int fg_available = 1;
+    // int place_holder = 1; // this is a place holder for a terminal_kill_signal
 
-    signal(SIGINT, &handle_signal);  // ctrl-c
-    signal(SIGTSTP, &handle_signal); // ctrl-z
-    // signal(SIGCHLD, &handle_signal);
-    // signal(SIGCONT, &handle_signal);
-    signal(SIGQUIT, &handle_signal); // ctrl-d
+    signal(SIGINT, handle_signal);  // ctrl-c
+    signal(SIGTSTP, handle_signal); // ctrl-z
+    signal(SIGCHLD, handle_signal);
+    //  signal(SIGCONT, &handle_signal);
+    signal(SIGQUIT, handle_signal); // ctrl-d
 
-    while (place_holder) // this should loop while there isn't kill signal to the shell ()
+    while (1) // this should loop while there isn't kill signal to the shell ()
     {
-        if (fg_available)
-        {
-            command = readline("# ");
-            if (strlen(command) > 0)
-            {
-                add_history(command);
-            }
 
-            parse_command(command);
+        command = readline("# ");
+        if (strlen(command) > 0)
+        {
+            add_history(command);
         }
+
+        parse_command(command);
+        // free(command);
     }
 
     return 0;
@@ -86,6 +98,8 @@ void parse_command(char *raw_cmd)
     int pipe_flg = -1;
     int overall_rdirect_flg = -1;
     int invalid_cmd_flg = 0;
+
+    pid_t cpid, w;
 
     while ((token = strtok_r(the_rest, " ", &the_rest)))
     {
@@ -124,6 +138,7 @@ void parse_command(char *raw_cmd)
         }
 
         parse_tracker++;
+        // free(token);
     }
 
     if (pipe_flg == 1) // if theres is a pipe
@@ -145,16 +160,7 @@ void parse_command(char *raw_cmd)
             close(file_d[0]);
             close(file_d[1]);
 
-            // execute_cmd(command_space, overall_rdirect_flg, 0);
-
-            if (overall_rdirect_flg != -1)
-            {
-                fileRedirection(command_space, 0);
-            }
-            if (execvp(command_space[0].parsed_cmd[0], command_space[0].parsed_cmd) == -1)
-            {
-                perror("exec");
-            }
+            execute_cmd(command_space, overall_rdirect_flg, 0);
         }
         int pid2 = fork();
         if (pid2 < 0)
@@ -168,22 +174,14 @@ void parse_command(char *raw_cmd)
             close(file_d[0]);
             close(file_d[1]);
 
-            // execute_cmd(command_space, overall_rdirect_flg, 1);
-
-            if (overall_rdirect_flg != -1)
-            {
-                fileRedirection(command_space, 1);
-            }
-            if (execvp(command_space[1].parsed_cmd[0], command_space[1].parsed_cmd) == -1)
-            {
-                perror("exec");
-            }
+            execute_cmd(command_space, overall_rdirect_flg, 1);
         }
         /*Proper Closing of File Descriptors*/
         close(file_d[0]);
         close(file_d[1]);
-        waitpid(pid1, NULL, 0);
-        waitpid(pid2, NULL, 0);
+        waitpid(pid1, NULL, WUNTRACED);
+        waitpid(pid2, NULL, WUNTRACED);
+        // waitpid(pid1, &wstatus, WUNTRACED);
     }
     else // run command as normal
     {
@@ -191,25 +189,12 @@ void parse_command(char *raw_cmd)
 
         if (pid == 0)
         {
-            // execute_cmd(command_space, overall_rdirect_flg, 0);
-            if (overall_rdirect_flg != -1)
-            {
-                fileRedirection(command_space, 0);
-            }
-
-            // child process
-            if (execvp(command_space[0].parsed_cmd[0], command_space[0].parsed_cmd) == -1)
-            {
-                perror("exec");
-            }
+            execute_cmd(command_space, overall_rdirect_flg, 0);
             exit(0);
         }
-        if (pid > 0)
+        else
         {
-            if (wait(0) == -1)
-            {
-                perror("wait");
-            }
+            waitpid(pid, &wstatus, WUNTRACED);
         }
     }
 }
@@ -235,12 +220,14 @@ int notFileRedirectOrPipe(char *token)
 
 void execute_cmd(Command cs[], int ord, int index)
 {
+    signal(SIGINT, SIG_DFL);
+    signal(SIGTSTP, SIG_DFL);
     if (ord != -1)
     {
         fileRedirection(cs, index);
     }
 
-    if (execvp(cs[0].parsed_cmd[0], cs[0].parsed_cmd) == -1)
+    if (execvp(cs[index].parsed_cmd[0], cs[index].parsed_cmd) == -1)
     {
         perror("exec");
     }

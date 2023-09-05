@@ -27,13 +27,3 @@ void execute_cmd(Command cs[], int ord, int index);
 void fileRedirection(Command cmds[], int index);
 
 void handle_signal(int signal);
-
-void handle_SIGINT(int signal);
-
-void handle_SIGTSTP(int signal);
-
-void handle_SIGCHLD(int signal);
-
-void handle_SIGCONT(int signal);
-
-void handle_SIGQUIT(int signal);
