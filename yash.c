@@ -6,14 +6,22 @@
 #include <unistd.h>
 #include <fcntl.h>
 
-struct Job
+typedef struct Command
+{
+    char *parsed_cmd[15];
+    char *rdirect_filename;
+    int pipe_flg;    // 0 no pipe, 1 pipe
+    int rdirect_flg; // 0 (<) STDIN, 1 (>) STDOUT, 2 (2>) STDERR, -1 NO Modification
+    int redirect_token_index;
+    int redirect_fd;
+} Command;
+typedef struct Job
 {
     int pid;    // unique identifier for the job 0 to Max
     int ground; // like background or foreground
     int status; // 0 stopped or 1 running
-    char *command;
-};
-typedef struct Job Job;
+    Command cmd;
+} Job;
 
 int main()
 {
@@ -39,82 +47,140 @@ int main()
     return 0;
 }
 
-void process_command(char *cmd)
+void process_command(char *raw_cmd)
 {
-    char *cmd_arr[10] = {NULL};
-    char *token, *the_rest, *redirect_file;
-    the_rest = cmd;
-    int rdirect_flg = 4; // 0 (<) from another file, 1 (>) to another file , 2 (2>) erro, 3 (|) piping, 4 no redirect
-    int i = 0;
-    int redirect_token_index = -1;
-    int redirect_fd;
+    Command command_space[2] = {
+        {.parsed_cmd = NULL, .rdirect_filename = NULL, .pipe_flg = 0, .rdirect_flg = -1, .redirect_fd = -1, .redirect_token_index = -1},
+        {.parsed_cmd = NULL, .rdirect_filename = NULL, .pipe_flg = 0, .rdirect_flg = -1, .redirect_fd = -1, .redirect_token_index = -1}}; // parsed_cmd,filename, pipe_flg, rdirect_flg, rdirect_index_token, rdirect_fd
+
+    char *token, *the_rest;
+    the_rest = raw_cmd;
+
+    int parse_tracker = 0;
+    int cmd_space_tracker = 0;
+
+    int pipe_flg = -1;
+    int overall_rdirect_flg = -1;
 
     while ((token = strtok_r(the_rest, " ", &the_rest)))
     {
-        if (notFileRedirectOrPipe(token) && i != redirect_token_index) // check to see if no pipe symbol and no file redirection
+        int its_not_r_or_p = notFileRedirectOrPipe(token);
+
+        if (its_not_r_or_p && parse_tracker != command_space[cmd_space_tracker].redirect_token_index) // check to see if no pipe symbol and no file redirection
         {
-            cmd_arr[i] = token;
+            command_space[cmd_space_tracker].parsed_cmd[parse_tracker] = token;
+        }
+        else if (its_not_r_or_p && parse_tracker != command_space[cmd_space_tracker].redirect_token_index && cmd_space_tracker > 0)
+        {
+            command_space[cmd_space_tracker].parsed_cmd[parse_tracker] = token;
         }
         else
         {
-            if (!strcmp(token, "<") && redirect_token_index == -1)
+            if (command_space[cmd_space_tracker].redirect_token_index == -1)
             {
-                rdirect_flg = 0;
-                redirect_token_index = i + 1;
+                if (!strcmp(token, "<"))
+                {
+                    command_space[cmd_space_tracker].rdirect_flg = 0;
+                    command_space[cmd_space_tracker].redirect_token_index = parse_tracker + 1;
+                    overall_rdirect_flg = 1;
+                }
+                else if (!strcmp(token, ">"))
+                {
+                    command_space[cmd_space_tracker].rdirect_flg = 1;
+                    command_space[cmd_space_tracker].redirect_token_index = parse_tracker + 1;
+                    overall_rdirect_flg = 1;
+                }
+                else if (!strcmp(token, "2>"))
+                {
+                    command_space[cmd_space_tracker].rdirect_flg = 2;
+                    command_space[cmd_space_tracker].redirect_token_index = parse_tracker + 1;
+                    overall_rdirect_flg = 1;
+                }
             }
-            else if (!strcmp(token, ">") && redirect_token_index == -1)
+
+            else if (command_space[cmd_space_tracker].redirect_token_index == parse_tracker && its_not_r_or_p)
             {
-                rdirect_flg = 1;
-                redirect_token_index = i + 1;
+                command_space[cmd_space_tracker].rdirect_filename = token;
             }
-            else if (!strcmp(token, "2>") && redirect_token_index == -1)
+            else if (!strcmp(token, "|"))
             {
-                rdirect_flg = 2;
-                redirect_token_index = i + 1;
-            }
-            else if (redirect_token_index == i && notFileRedirectOrPipe(token))
-            {
-                redirect_file = token;
+
+                parse_tracker = -1;
+                pipe_flg = 1;
+                command_space[cmd_space_tracker].pipe_flg = 1;
+                cmd_space_tracker++;
             }
         }
 
-        i++;
+        parse_tracker++;
     }
-    if (isValidExecCmd(cmd_arr[0]))
+
+    if (pipe_flg == 1)
     {
-        __pid_t pid = fork();
+        int file_d[2];
+        if (pipe(file_d) == -1)
+        {
+            return;
+        }
+        int pid1 = fork();
+        if (pid1 < 0)
+        {
+            return;
+        }
+        if (pid1 == 0)
+        {
+            // This is the left side of the command
+            dup2(file_d[1], STDOUT_FILENO);
+            close(file_d[0]);
+            close(file_d[1]);
+            if (overall_rdirect_flg != -1)
+            {
+                fileRedirection(command_space, 0);
+            }
+            if (execvp(command_space[0].parsed_cmd[0], command_space[0].parsed_cmd) == -1)
+            {
+                perror("exec");
+            }
+        }
+        int pid2 = fork();
+        if (pid2 < 0)
+        {
+            return;
+        }
+        if (pid2 == 0)
+        {
+            // This is the right side of the command
+            dup2(file_d[0], STDIN_FILENO);
+            close(file_d[0]);
+            close(file_d[1]);
+            if (overall_rdirect_flg != -1)
+            {
+                fileRedirection(command_space, 1);
+            }
+            if (execvp(command_space[1].parsed_cmd[0], command_space[1].parsed_cmd) == -1)
+            {
+                perror("exec");
+            }
+        }
+        /*Proper Closing of File Descriptors*/
+        close(file_d[0]);
+        close(file_d[1]);
+        waitpid(pid1, NULL, 0);
+        waitpid(pid2, NULL, 0);
+    }
+    else
+    {
+        int pid = fork();
 
         if (pid == 0)
         {
-            if (rdirect_flg == 1)
+            if (overall_rdirect_flg != -1)
             {
-                redirect_fd = open(redirect_file, O_CREAT | O_TRUNC | O_WRONLY, 0600);
-                dup2(redirect_fd, STDOUT_FILENO);
-                close(redirect_fd);
+                fileRedirection(command_space, 0);
             }
-            if (rdirect_flg == 0)
-            {
-                redirect_fd = open(redirect_file, O_RDONLY);
-                if (redirect_fd != -1)
-                {
-                    dup2(redirect_fd, STDIN_FILENO);
-                    close(redirect_fd);
-                }
-                else
-                {
-                    printf("The file does not exist");
-                }
-            }
-            if (rdirect_flg == 2)
-            {
-                redirect_fd = open(redirect_file, O_CREAT | O_TRUNC | O_WRONLY);
 
-                dup2(redirect_fd, STDERR_FILENO);
-                close(redirect_fd);
-                printf("The file does not exist");
-            }
             // child process
-            if (execvp(cmd_arr[0], cmd_arr) == -1)
+            if (execvp(command_space[0].parsed_cmd[0], command_space[0].parsed_cmd) == -1)
             {
                 perror("exec");
             }
@@ -127,9 +193,6 @@ void process_command(char *cmd)
                 perror("wait");
             }
         }
-    }
-    else
-    {
     }
 }
 
@@ -150,4 +213,41 @@ int notFileRedirectOrPipe(char *token)
         return 1;
     }
     return 0;
+}
+
+void fileRedirection(Command cmds[], int index)
+{
+    int descriptor = cmds[index].redirect_fd;
+    char *file = cmds[index].rdirect_filename;
+    int flg = cmds[index].rdirect_flg;
+    if (flg == 1)
+    {
+        descriptor = open(file, O_CREAT | O_TRUNC | O_WRONLY, 0600);
+        dup2(descriptor, STDOUT_FILENO);
+        close(descriptor);
+    }
+    if (flg == 0)
+    {
+        descriptor = open(file, O_RDONLY);
+        if (descriptor != -1)
+        {
+            dup2(descriptor, STDIN_FILENO);
+            close(descriptor);
+        }
+        else
+        {
+            printf("The file does not exist");
+        }
+    }
+    if (flg == 2)
+    {
+        descriptor = open(file, O_CREAT | O_TRUNC | O_WRONLY);
+        dup2(descriptor, STDERR_FILENO);
+        close(descriptor);
+        printf("The file does not exist");
+    }
+}
+
+void execute_command()
+{
 }
