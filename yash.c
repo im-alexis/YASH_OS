@@ -5,6 +5,7 @@
 #include <readline/history.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <signal.h>
 
 typedef struct Command
 {
@@ -23,12 +24,35 @@ typedef struct Job
     Command cmd;
 } Job;
 
+void handle_signal(int signal)
+{
+    if (signal == SIGQUIT)
+    {
+        printf("Leaving");
+        exit(0);
+    }
+    else if (signal == SIGINT)
+    {
+        printf("\nCtrl-c was pressed");
+    }
+    else if (signal == SIGTSTP)
+    {
+        printf("\nCtrl-z was pressed");
+    }
+}
+
 int main()
 {
     char *command;
 
     int fg_available = 1;
     int place_holder = 1; // this is a place holder for a terminal_kill_signal
+
+    signal(SIGINT, &handle_signal);  // ctrl-c
+    signal(SIGTSTP, &handle_signal); // ctrl-z
+    // signal(SIGCHLD, &handle_signal);
+    // signal(SIGCONT, &handle_signal);
+    signal(SIGQUIT, &handle_signal); // ctrl-d
 
     while (place_holder) // this should loop while there isn't kill signal to the shell ()
     {
@@ -40,14 +64,14 @@ int main()
                 add_history(command);
             }
 
-            process_command(command);
+            parse_command(command);
         }
     }
 
     return 0;
 }
 
-void process_command(char *raw_cmd)
+void parse_command(char *raw_cmd)
 {
     Command command_space[2] = {
         {.parsed_cmd = NULL, .rdirect_filename = NULL, .pipe_flg = 0, .rdirect_flg = -1, .redirect_fd = -1, .redirect_token_index = -1},
@@ -71,36 +95,27 @@ void process_command(char *raw_cmd)
         {
             command_space[cmd_space_tracker].parsed_cmd[parse_tracker] = token;
         }
-        // else if (its_not_r_or_p && parse_tracker != command_space[cmd_space_tracker].redirect_token_index && cmd_space_tracker > 0)
-        // {
-        //     command_space[cmd_space_tracker].parsed_cmd[parse_tracker] = token;
-        // }
         else
         {
             if (command_space[cmd_space_tracker].redirect_token_index == -1 && strcmp(token, "|"))
             {
+                command_space[cmd_space_tracker].rdirect_filename = strtok_r(the_rest, " ", &the_rest);
+                overall_rdirect_flg = 1;
                 if (!strcmp(token, "<"))
                 {
                     command_space[cmd_space_tracker].rdirect_flg = 0;
-                    command_space[cmd_space_tracker].rdirect_filename = strtok_r(the_rest, " ", &the_rest);
-                    overall_rdirect_flg = 1;
                 }
                 else if (!strcmp(token, ">"))
                 {
                     command_space[cmd_space_tracker].rdirect_flg = 1;
-                    command_space[cmd_space_tracker].rdirect_filename = strtok_r(the_rest, " ", &the_rest);
-                    overall_rdirect_flg = 1;
                 }
                 else if (!strcmp(token, "2>"))
                 {
                     command_space[cmd_space_tracker].rdirect_flg = 2;
-                    command_space[cmd_space_tracker].rdirect_filename = strtok_r(the_rest, " ", &the_rest);
-                    overall_rdirect_flg = 1;
                 }
             }
             else if (!strcmp(token, "|"))
             {
-
                 parse_tracker = -1;
                 pipe_flg = 1;
                 command_space[cmd_space_tracker].pipe_flg = 1;
@@ -111,7 +126,7 @@ void process_command(char *raw_cmd)
         parse_tracker++;
     }
 
-    if (pipe_flg == 1)
+    if (pipe_flg == 1) // if theres is a pipe
     {
         int file_d[2];
         if (pipe(file_d) == -1)
@@ -129,6 +144,9 @@ void process_command(char *raw_cmd)
             dup2(file_d[1], STDOUT_FILENO);
             close(file_d[0]);
             close(file_d[1]);
+
+            // execute_cmd(command_space, overall_rdirect_flg, 0);
+
             if (overall_rdirect_flg != -1)
             {
                 fileRedirection(command_space, 0);
@@ -149,6 +167,9 @@ void process_command(char *raw_cmd)
             dup2(file_d[0], STDIN_FILENO);
             close(file_d[0]);
             close(file_d[1]);
+
+            // execute_cmd(command_space, overall_rdirect_flg, 1);
+
             if (overall_rdirect_flg != -1)
             {
                 fileRedirection(command_space, 1);
@@ -164,12 +185,13 @@ void process_command(char *raw_cmd)
         waitpid(pid1, NULL, 0);
         waitpid(pid2, NULL, 0);
     }
-    else
+    else // run command as normal
     {
         int pid = fork();
 
         if (pid == 0)
         {
+            // execute_cmd(command_space, overall_rdirect_flg, 0);
             if (overall_rdirect_flg != -1)
             {
                 fileRedirection(command_space, 0);
@@ -211,6 +233,20 @@ int notFileRedirectOrPipe(char *token)
     return 0;
 }
 
+void execute_cmd(Command cs[], int ord, int index)
+{
+    if (ord != -1)
+    {
+        fileRedirection(cs, index);
+    }
+
+    if (execvp(cs[0].parsed_cmd[0], cs[0].parsed_cmd) == -1)
+    {
+        perror("exec");
+    }
+    exit(0);
+}
+
 void fileRedirection(Command cmds[], int index)
 {
     int descriptor = cmds[index].redirect_fd;
@@ -242,8 +278,4 @@ void fileRedirection(Command cmds[], int index)
         close(descriptor);
         printf("The file does not exist");
     }
-}
-
-void execute_command()
-{
 }
