@@ -22,6 +22,6 @@ int isValidExecCmd(char *cmd_tok);
 
 int notFileRedirectOrPipe(char *token);
 
-void fileRedirection(Command cmds[]);
+void fileRedirection(Command cmds[], int index);
 
 void execute_command();

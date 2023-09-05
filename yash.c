@@ -61,6 +61,7 @@ void process_command(char *raw_cmd)
 
     int pipe_flg = -1;
     int overall_rdirect_flg = -1;
+    int invalid_cmd_flg = 0;
 
     while ((token = strtok_r(the_rest, " ", &the_rest)))
     {
@@ -70,37 +71,32 @@ void process_command(char *raw_cmd)
         {
             command_space[cmd_space_tracker].parsed_cmd[parse_tracker] = token;
         }
-        else if (its_not_r_or_p && parse_tracker != command_space[cmd_space_tracker].redirect_token_index && cmd_space_tracker > 0)
-        {
-            command_space[cmd_space_tracker].parsed_cmd[parse_tracker] = token;
-        }
+        // else if (its_not_r_or_p && parse_tracker != command_space[cmd_space_tracker].redirect_token_index && cmd_space_tracker > 0)
+        // {
+        //     command_space[cmd_space_tracker].parsed_cmd[parse_tracker] = token;
+        // }
         else
         {
-            if (command_space[cmd_space_tracker].redirect_token_index == -1)
+            if (command_space[cmd_space_tracker].redirect_token_index == -1 && strcmp(token, "|"))
             {
                 if (!strcmp(token, "<"))
                 {
                     command_space[cmd_space_tracker].rdirect_flg = 0;
-                    command_space[cmd_space_tracker].redirect_token_index = parse_tracker + 1;
+                    command_space[cmd_space_tracker].rdirect_filename = strtok_r(the_rest, " ", &the_rest);
                     overall_rdirect_flg = 1;
                 }
                 else if (!strcmp(token, ">"))
                 {
                     command_space[cmd_space_tracker].rdirect_flg = 1;
-                    command_space[cmd_space_tracker].redirect_token_index = parse_tracker + 1;
+                    command_space[cmd_space_tracker].rdirect_filename = strtok_r(the_rest, " ", &the_rest);
                     overall_rdirect_flg = 1;
                 }
                 else if (!strcmp(token, "2>"))
                 {
                     command_space[cmd_space_tracker].rdirect_flg = 2;
-                    command_space[cmd_space_tracker].redirect_token_index = parse_tracker + 1;
+                    command_space[cmd_space_tracker].rdirect_filename = strtok_r(the_rest, " ", &the_rest);
                     overall_rdirect_flg = 1;
                 }
-            }
-
-            else if (command_space[cmd_space_tracker].redirect_token_index == parse_tracker && its_not_r_or_p)
-            {
-                command_space[cmd_space_tracker].rdirect_filename = token;
             }
             else if (!strcmp(token, "|"))
             {
