@@ -20,10 +20,10 @@ void parse_command(char *cmd);
 
 int isValidExecCmd(char *cmd_tok);
 
-int notFileRedirectOrPipe(char *token);
+int special_token_checker(char *token);
 
 void execute_cmd(Command cs[], int ord, int index);
 
-void fileRedirection(Command cmds[], int index);
+void file_redirection(Command cmds[], int index);
 
 void handle_signal(int signal);
