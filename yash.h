@@ -6,14 +6,16 @@ typedef struct Command
     int rdirect_flg;
     int redirect_token_index;
     int redirect_fd;
+    int bg_flg;
 } Command;
 
 typedef struct Job
 {
     int pid;
-    int ground;
-    int status;
-    Command cmd;
+    int stack_id;
+    int running;
+    int pstatus;
+    char *og_cmd;
 } Job;
 
 void parse_command(char *cmd);
@@ -27,3 +29,11 @@ void execute_cmd(Command cs[], int ord, int index);
 void file_redirection(Command cmds[], int index);
 
 void handle_signal(int signal);
+
+void fg_cmd();
+
+void bg_cmd();
+
+void jobs_cmd();
+
+void clean_stack();

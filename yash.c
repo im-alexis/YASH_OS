@@ -6,13 +6,7 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/wait.h>
-
-// volatile sig_atomic_t sigquit_received = 0;
-// int fg_available = 1;
-// int place_holder = 1; // this is a place holder for a terminal_kill_signal
-// int parent_pid;
-
-int wstatus;
+#include <stdlib.h>
 
 typedef struct Command
 {
@@ -22,59 +16,60 @@ typedef struct Command
     int rdirect_flg; // 0 (<) STDIN, 1 (>) STDOUT, 2 (2>) STDERR, -1 NO Modification
     int redirect_token_index;
     int redirect_fd;
+    int bg_flg;
 } Command;
 typedef struct Job
 {
-    int pid;    // unique identifier for the job 0 to Max
-    int ground; // like background or foreground
-    int status; // 0 stopped or 1 running
-    Command cmd;
+    int pid; // the pid of the process
+    int stack_id;
+    int running; // 0 stopped or 1 running
+    int pstatus;
+    char *og_cmd;
 } Job;
+
+Job jobs_stack[20];
+int table_population;
+int history_value;
 
 void handle_signal(int signal)
 {
     switch (signal)
     {
     case SIGCHLD:
-        // note that the last argument is important for the wait to work
-        // waitpid(-1, &wstatus, WNOHANG);
         break;
     case SIGQUIT:
         exit(0);
     case SIGINT:
-        write(STDOUT_FILENO, "\n#", 3);
         break;
     case SIGTSTP:
-        write(STDOUT_FILENO, "\n#", 3);
         break;
     }
-
     return;
 }
 
 int main()
 {
     char *command;
-    // parent_pid = getpid();
-
-    // int fg_available = 1;
-    // int place_holder = 1; // this is a place holder for a terminal_kill_signal
+    table_population = 0;
+    history_value = 1;
 
     signal(SIGINT, handle_signal);  // ctrl-c
     signal(SIGTSTP, handle_signal); // ctrl-z
     signal(SIGCHLD, handle_signal);
-    //  signal(SIGCONT, &handle_signal);
     signal(SIGQUIT, handle_signal); // ctrl-d
 
     while (1) // this should loop while there isn't kill signal to the shell ()
     {
         command = readline("# ");
-        if (strlen(command) > 0)
+        if (command != EOF)
         {
-            add_history(command);
+            if (strlen(command) > 0)
+            {
+                add_history(command);
+            }
+            parse_command(command);
+            // free(command);
         }
-        parse_command(command);
-        // free(command);
     }
 
     return 0;
@@ -83,24 +78,79 @@ int main()
 void parse_command(char *raw_cmd)
 {
     Command command_space[2] = {
-        {.parsed_cmd = NULL, .rdirect_filename = NULL, .pipe_flg = 0, .rdirect_flg = -1, .redirect_fd = -1, .redirect_token_index = -1},
-        {.parsed_cmd = NULL, .rdirect_filename = NULL, .pipe_flg = 0, .rdirect_flg = -1, .redirect_fd = -1, .redirect_token_index = -1}}; // parsed_cmd,filename, pipe_flg, rdirect_flg, rdirect_index_token, rdirect_fd
+        {.parsed_cmd = NULL, .rdirect_filename = NULL, .pipe_flg = 0, .rdirect_flg = -1, .redirect_fd = -1, .redirect_token_index = -1, .bg_flg = 0},
+        {.parsed_cmd = NULL, .rdirect_filename = NULL, .pipe_flg = 0, .rdirect_flg = -1, .redirect_fd = -1, .redirect_token_index = -1, .bg_flg = 0}}; // parsed_cmd,filename, pipe_flg, rdirect_flg, rdirect_index_token, rdirect_fd
 
-    char *token, *the_rest;
-    the_rest = raw_cmd;
+    char *token, *the_rest, *cpy;
+    cpy = malloc(sizeof(raw_cmd));
+    the_rest = cpy;
+    strcpy(the_rest, raw_cmd);
 
     int parse_tracker = 0;
     int cmd_space_tracker = 0;
 
-    int pipe_flg = -1;
-    int overall_rdirect_flg = -1;
+    // potentially swtich all flags into one number and go by bits
+    int pipe_flg = 0;
+    int overall_rdirect_flg = 0;
     int invalid_cmd_flg = 0;
     int background_flg = 0;
     int first_token_recieved = 0;
+    int fg_cmd_flg = 0;
+    int bg_cmd_flg = 0;
+    int jobs_cmd_flg = 0;
 
-    while ((token = strtok_r(the_rest, " ", &the_rest)))
+    while ((token = strtok_r(NULL, " ", &the_rest)))
     {
+
         int its_r_p_b = special_token_checker(token);
+        if (!strcmp(token, "fg"))
+        {
+            if (fg_cmd_flg || bg_cmd_flg || jobs_cmd_flg)
+            {
+                invalid_cmd_flg = 1;
+                break;
+            }
+            if (first_token_recieved)
+            {
+                invalid_cmd_flg = 1;
+                break;
+            }
+            fg_cmd_flg = 1;
+            first_token_recieved = 1;
+            continue;
+        }
+        if (!strcmp(token, "bg"))
+        {
+            if (fg_cmd_flg || bg_cmd_flg || jobs_cmd_flg)
+            {
+                invalid_cmd_flg = 1;
+                break;
+            }
+
+            if (first_token_recieved)
+            {
+                invalid_cmd_flg = 1;
+                break;
+            }
+            bg_cmd_flg = 1;
+            first_token_recieved = 1;
+            continue;
+        }
+        if (!strcmp(token, "jobs"))
+        {
+            if (fg_cmd_flg || bg_cmd_flg || jobs_cmd_flg)
+            {
+                invalid_cmd_flg = 1;
+                break;
+            }
+            if (first_token_recieved)
+            {
+                invalid_cmd_flg = 1;
+                break;
+            }
+            jobs_cmd_flg = 1;
+            first_token_recieved = 1;
+        }
 
         if (!its_r_p_b && parse_tracker != command_space[cmd_space_tracker].redirect_token_index) // check to see if token is not a special token
         {
@@ -149,41 +199,43 @@ void parse_command(char *raw_cmd)
             else if (!strcmp(token, "&"))
             {
                 background_flg = 1;
+                command_space[cmd_space_tracker].bg_flg = 1;
             }
         }
 
         parse_tracker++;
         // free(token);
     }
-    if (!invalid_cmd_flg) // checks if the invalid command flag was triggered
+    if (!invalid_cmd_flg && (fg_cmd_flg != 1 && bg_cmd_flg != 1 && jobs_cmd_flg != 1)) // checks if the invalid command flag was triggered
     {
-        if (pipe_flg == 1) // if theres is a pipe
+        if (pipe_flg) // if theres is a pipe
         {
             int file_d[2];
             if (pipe(file_d) == -1)
             {
                 return;
             }
+
             int pid1 = fork();
             if (pid1 < 0)
             {
                 return;
             }
-            if (pid1 == 0)
+            if (!pid1)
             {
                 // This is the left side of the command
                 dup2(file_d[1], STDOUT_FILENO);
                 close(file_d[0]);
                 close(file_d[1]);
-
                 execute_cmd(command_space, overall_rdirect_flg, 0);
             }
+
             int pid2 = fork();
             if (pid2 < 0)
             {
                 return;
             }
-            if (pid2 == 0)
+            if (!pid2)
             {
                 // This is the right side of the command
                 dup2(file_d[0], STDIN_FILENO);
@@ -192,43 +244,77 @@ void parse_command(char *raw_cmd)
 
                 execute_cmd(command_space, overall_rdirect_flg, 1);
             }
+
             /*Proper Closing of File Descriptors*/
             close(file_d[0]);
             close(file_d[1]);
+            Job process = {.pid = pid2, .og_cmd = raw_cmd, .stack_id = history_value, .running = 1, .pstatus = 0};
             waitpid(pid1, NULL, WUNTRACED);
-            if (background_flg)
+            if (background_flg && table_population < 20)
             {
-                waitpid(pid2, NULL, WNOHANG);
+
+                jobs_stack[table_population] = process;
+                table_population++;
+                history_value++;
+                waitpid(pid2, &process.pstatus, WNOHANG);
             }
             else
             {
-                waitpid(pid2, NULL, WUNTRACED);
+                waitpid(pid2, &process.pstatus, WUNTRACED);
+                if (WIFSTOPPED(process.pstatus))
+                {
+                    jobs_stack[table_population] = process;
+                    table_population++;
+                    history_value++;
+                }
             }
-
-            // waitpid(pid1, &wstatus, WUNTRACED);
         }
         else // run command as normal
         {
-            int pid = fork();
-
-            if (pid == 0)
+            int pid = fork(); // this pid is the child
+            if (!pid)
             {
                 execute_cmd(command_space, overall_rdirect_flg, 0);
                 exit(0);
             }
             else
             {
-                if (background_flg)
+                Job process = {.pid = pid, .og_cmd = raw_cmd, .stack_id = history_value, .running = 1, .pstatus = 0};
+                if (background_flg && table_population < 20)
                 {
-                    waitpid(pid, &wstatus, WNOHANG);
+                    jobs_stack[table_population] = process;
+                    table_population++;
+                    history_value++;
+
+                    waitpid(pid, &process.pstatus, WNOHANG);
                 }
                 else
                 {
-                    waitpid(pid, &wstatus, WUNTRACED);
+                    waitpid(pid, &process.pstatus, WUNTRACED);
+                    if (WIFSTOPPED(process.pstatus))
+                    {
+                        process.running = 0;
+                        jobs_stack[table_population] = process;
+                        table_population++;
+                        history_value++;
+                    }
                 }
             }
         }
     }
+    if (fg_cmd_flg)
+    {
+        fg_cmd();
+    }
+    else if (bg_cmd_flg)
+    {
+        bg_cmd();
+    }
+    else if (jobs_cmd_flg)
+    {
+        jobs_cmd();
+    }
+    free(cpy);
 }
 
 int isValidExecCmd(char *cmd_tok)
@@ -258,7 +344,6 @@ void execute_cmd(Command cs[], int ord, int index)
     {
         file_redirection(cs, index);
     }
-
     if (execvp(cs[index].parsed_cmd[0], cs[index].parsed_cmd) == -1)
     {
         perror("exec");
@@ -287,7 +372,7 @@ void file_redirection(Command cmds[], int index)
         }
         else
         {
-            printf("The file does not exist");
+            printf("The file does not exist\n");
         }
     }
     if (flg == 2)
@@ -295,6 +380,59 @@ void file_redirection(Command cmds[], int index)
         descriptor = open(file, O_CREAT | O_TRUNC | O_WRONLY);
         dup2(descriptor, STDERR_FILENO);
         close(descriptor);
-        printf("The file does not exist");
+        printf("The file does not exist\n");
     }
+}
+
+void fg_cmd()
+{
+    Job top_stack = jobs_stack[table_population - 1];
+    int ts_pid = top_stack.pid;
+
+    kill(ts_pid, SIGCONT);
+    // printf("Continuing pid: %d", ts_pid);
+    waitpid(ts_pid, &top_stack.pstatus, WUNTRACED);
+    if (WIFEXITED(top_stack.pstatus))
+    {
+        printf("[%d] + Done    %s\n", top_stack.stack_id, top_stack.og_cmd);
+        table_population--;
+    }
+    return;
+}
+
+void bg_cmd()
+{
+}
+
+void jobs_cmd()
+{
+    for (int i = 0; i < table_population; i++)
+    {
+        if (i == (table_population - 1))
+        {
+            if (jobs_stack[i].running)
+            {
+                printf("[%d] + Running    %s\n", jobs_stack[i].stack_id, jobs_stack[i].og_cmd);
+            }
+            else
+            {
+                printf("[%d] + Stopped    %s\n", jobs_stack[i].stack_id, jobs_stack[i].og_cmd);
+            }
+        }
+        else
+        {
+            if (jobs_stack[i].running)
+            {
+                printf("[%d] - Running    %s\n", jobs_stack[i].stack_id, jobs_stack[i].og_cmd);
+            }
+            else
+            {
+                printf("[%d] - Stopped    %s\n", jobs_stack[i].stack_id, jobs_stack[i].og_cmd);
+            }
+        }
+    }
+}
+
+void clean_stack()
+{
 }

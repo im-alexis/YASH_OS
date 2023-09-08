@@ -1,0 +1,38 @@
+Make functions:
+
+1)
+            if (fg_cmd_flg || bg_cmd_flg || jobs_cmd_flg)
+            {
+                invalid_cmd_flg = 1;
+                break;
+            }
+            if (first_token_recieved)
+            {
+                invalid_cmd_flg = 1;
+                break;
+            }
+
+2)
+
+Job process = {.pid = pid, .og_cmd = raw_cmd, .stack_id = history_value, .running = 1, .pstatus = 0};
+                if (background_flg && table_population < 20)
+                {
+                    jobs_stack[table_population] = process;
+                    table_population++;
+                    history_value++;
+
+                    waitpid(pid, &process.pstatus, WNOHANG);
+                }
+                else
+                {
+                    waitpid(pid, &process.pstatus, WUNTRACED);
+                    if (WIFSTOPPED(process.pstatus))
+                    {
+                        process.running = 0;
+                        jobs_stack[table_population] = process;
+                        table_population++;
+                        history_value++;
+                    }
+                }
+
+3)
