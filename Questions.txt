@@ -1,0 +1,3 @@
+Ctrl-D has a seg fault at my string length check
+
+is it okay that i just peridically clean my stack, or is required as soon as something is terminated notify

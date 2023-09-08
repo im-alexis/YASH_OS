@@ -35,4 +35,7 @@ Job process = {.pid = pid, .og_cmd = raw_cmd, .stack_id = history_value, .runnin
                     }
                 }
 
-3)
+3) File redirecting Fix
+        Make it possible to use all the redirects withing one command
+        ideas:
+            Redirect struct

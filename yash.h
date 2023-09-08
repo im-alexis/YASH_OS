@@ -24,7 +24,7 @@ int isValidExecCmd(char *cmd_tok);
 
 int special_token_checker(char *token);
 
-void execute_cmd(Command cs[], int ord, int index);
+void execvp_call(Command cs[], int ord, int index);
 
 void file_redirection(Command cmds[], int index);
 
@@ -37,3 +37,7 @@ void bg_cmd();
 void jobs_cmd();
 
 void clean_stack();
+
+void execute_cmd();
+
+void move_to_end(int index);

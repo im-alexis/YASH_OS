@@ -30,12 +30,14 @@ typedef struct Job
 Job jobs_stack[20];
 int table_population;
 int history_value;
+int recent_stop;
 
 void handle_signal(int signal)
 {
     switch (signal)
     {
     case SIGCHLD:
+
         break;
     case SIGQUIT:
         exit(0);
@@ -52,6 +54,7 @@ int main()
     char *command;
     table_population = 0;
     history_value = 1;
+    recent_stop = -1;
 
     signal(SIGINT, handle_signal);  // ctrl-c
     signal(SIGTSTP, handle_signal); // ctrl-z
@@ -60,6 +63,7 @@ int main()
 
     while (1) // this should loop while there isn't kill signal to the shell ()
     {
+        clean_stack();
         command = readline("# ");
         if (command != EOF)
         {
@@ -68,7 +72,6 @@ int main()
                 add_history(command);
             }
             parse_command(command);
-            // free(command);
         }
     }
 
@@ -206,6 +209,7 @@ void parse_command(char *raw_cmd)
         parse_tracker++;
         // free(token);
     }
+
     if (!invalid_cmd_flg && (fg_cmd_flg != 1 && bg_cmd_flg != 1 && jobs_cmd_flg != 1)) // checks if the invalid command flag was triggered
     {
         if (pipe_flg) // if theres is a pipe
@@ -227,7 +231,7 @@ void parse_command(char *raw_cmd)
                 dup2(file_d[1], STDOUT_FILENO);
                 close(file_d[0]);
                 close(file_d[1]);
-                execute_cmd(command_space, overall_rdirect_flg, 0);
+                execvp_call(command_space, overall_rdirect_flg, 0);
             }
 
             int pid2 = fork();
@@ -242,7 +246,7 @@ void parse_command(char *raw_cmd)
                 close(file_d[0]);
                 close(file_d[1]);
 
-                execute_cmd(command_space, overall_rdirect_flg, 1);
+                execvp_call(command_space, overall_rdirect_flg, 1);
             }
 
             /*Proper Closing of File Descriptors*/
@@ -264,6 +268,7 @@ void parse_command(char *raw_cmd)
                 if (WIFSTOPPED(process.pstatus))
                 {
                     jobs_stack[table_population] = process;
+                    recent_stop = table_population;
                     table_population++;
                     history_value++;
                 }
@@ -274,7 +279,7 @@ void parse_command(char *raw_cmd)
             int pid = fork(); // this pid is the child
             if (!pid)
             {
-                execute_cmd(command_space, overall_rdirect_flg, 0);
+                execvp_call(command_space, overall_rdirect_flg, 0);
                 exit(0);
             }
             else
@@ -294,7 +299,9 @@ void parse_command(char *raw_cmd)
                     if (WIFSTOPPED(process.pstatus))
                     {
                         process.running = 0;
+
                         jobs_stack[table_population] = process;
+                        recent_stop = table_population;
                         table_population++;
                         history_value++;
                     }
@@ -336,7 +343,7 @@ int special_token_checker(char *token)
     return 1;
 }
 
-void execute_cmd(Command cs[], int ord, int index)
+void execvp_call(Command cs[], int ord, int index)
 {
     signal(SIGINT, SIG_DFL);
     signal(SIGTSTP, SIG_DFL);
@@ -386,22 +393,33 @@ void file_redirection(Command cmds[], int index)
 
 void fg_cmd()
 {
-    Job top_stack = jobs_stack[table_population - 1];
-    int ts_pid = top_stack.pid;
-
-    kill(ts_pid, SIGCONT);
-    // printf("Continuing pid: %d", ts_pid);
-    waitpid(ts_pid, &top_stack.pstatus, WUNTRACED);
-    if (WIFEXITED(top_stack.pstatus))
+    if (table_population > 0)
     {
-        printf("[%d] + Done    %s\n", top_stack.stack_id, top_stack.og_cmd);
-        table_population--;
+        Job top_stack = jobs_stack[table_population - 1];
+        int ts_pid = top_stack.pid;
+
+        kill(ts_pid, SIGCONT);
+        int val = waitpid(ts_pid, &top_stack.pstatus, WUNTRACED);
+        if (val > 0)
+        {
+            printf("[%d] + Done    %s\n", top_stack.stack_id, top_stack.og_cmd);
+            table_population--;
+        }
     }
+
     return;
 }
 
 void bg_cmd()
 {
+    if (recent_stop != -1)
+    {
+        Job process = jobs_stack[recent_stop];
+        move_to_end(recent_stop);
+        printf("[%d] + Running    %s\n", process.stack_id, process.og_cmd);
+        kill(process.pid, SIGCONT);
+        // waitpid(process.pid, &process.pstatus, WNOHANG);
+    }
 }
 
 void jobs_cmd()
@@ -434,5 +452,56 @@ void jobs_cmd()
 }
 
 void clean_stack()
+{
+    Job tmp[20];
+    int temp_index = 0;
+    int rm_val = 0;
+    for (int i = 0; i < table_population; i++)
+    {
+        Job process = jobs_stack[i];
+        int val = waitpid(process.pid, &process.pstatus, WNOHANG);
+        if (val > 0)
+        {
+            printf("[%d] + Done    %s\n ", process.stack_id, process.og_cmd);
+            rm_val++;
+        }
+        else
+        {
+            tmp[temp_index] = jobs_stack[i];
+            temp_index++;
+        }
+    }
+    for (int i = 0; i < table_population; i++)
+    {
+        jobs_stack[i] = tmp[i];
+    }
+    table_population = table_population - rm_val;
+    if (table_population == 0)
+    {
+        history_value = 1;
+    }
+}
+
+void move_to_end(int index)
+{
+    if (index != (table_population - 1))
+    {
+        Job tmp[20];
+        for (int i = 0; i < table_population; i++)
+        {
+            if (index != i)
+            {
+                tmp[i] = jobs_stack[i];
+            }
+        }
+        tmp[table_population - 1] = jobs_stack[index];
+        for (int i = 0; i < table_population; i++)
+        {
+            jobs_stack[i] = tmp[i];
+        }
+    }
+}
+
+void execute_cmd()
 {
 }
