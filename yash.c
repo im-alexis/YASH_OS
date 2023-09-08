@@ -64,6 +64,8 @@ void handle_signal(int signal)
         break;
     case SIGTSTP:
         break;
+    case SIGTTOU:
+        break;
     }
     return;
 }
@@ -79,11 +81,13 @@ int main()
     signal(SIGTSTP, handle_signal); // ctrl-z
     signal(SIGCHLD, handle_signal);
     signal(SIGQUIT, handle_signal); // ctrl-d
+    signal(SIGTTOU, handle_signal);
 
     while (1)
     {
         clean_stack(); // periodic call to stack clean up
         command = readline("# ");
+        clean_stack(); // periodic call to stack clean up
         if (command != EOF)
         {
             if (strlen(command) > 0)
