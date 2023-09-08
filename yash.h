@@ -38,6 +38,6 @@ void jobs_cmd();
 
 void clean_stack();
 
-void execute_cmd();
+void execute_cmd(int flgs, Command cmds[], char *raw_cmd);
 
-void move_to_end(int index);
+int fg_bg_jobs_flgs(int flgs);

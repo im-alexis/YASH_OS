@@ -8,6 +8,24 @@
 #include <sys/wait.h>
 #include <stdlib.h>
 
+#define pipe_flg_msk 0x0001
+#define overall_rdirect_flg_msk 0x0002
+#define invalid_cmd_flg_msk 0x0004
+#define background_flg_msk 0x0008
+#define first_token_recieved_msk 0x0010
+#define fg_cmd_flg_msk 0x0020
+#define bg_cmd_flg_msk 0x0040
+#define jobs_cmd_flg_msk 0x0080
+
+typedef struct FileRedirection
+{
+    char *STDIN_FILE;
+    char *STDOUT_FILE;
+    char *STDERR_FILE;
+    int rdirect_flgs; // b[0] (<) STDIN, b[1] (>) STDOUT, b[2] (2>) STDERR
+    int redirect_token_index;
+    int redirect_fd;
+} FileRedirection;
 typedef struct Command
 {
     char *parsed_cmd[15];
@@ -17,6 +35,7 @@ typedef struct Command
     int redirect_token_index;
     int redirect_fd;
     int bg_flg;
+    FileRedirection files;
 } Command;
 typedef struct Job
 {
@@ -37,7 +56,7 @@ void handle_signal(int signal)
     switch (signal)
     {
     case SIGCHLD:
-
+        // Candidate for stack clean up location
         break;
     case SIGQUIT:
         exit(0);
@@ -61,9 +80,9 @@ int main()
     signal(SIGCHLD, handle_signal);
     signal(SIGQUIT, handle_signal); // ctrl-d
 
-    while (1) // this should loop while there isn't kill signal to the shell ()
+    while (1)
     {
-        clean_stack();
+        clean_stack(); // periodic call to stack clean up
         command = readline("# ");
         if (command != EOF)
         {
@@ -74,7 +93,6 @@ int main()
             parse_command(command);
         }
     }
-
     return 0;
 }
 
@@ -92,235 +110,77 @@ void parse_command(char *raw_cmd)
     int parse_tracker = 0;
     int cmd_space_tracker = 0;
 
-    // potentially swtich all flags into one number and go by bits
-    int pipe_flg = 0;
-    int overall_rdirect_flg = 0;
-    int invalid_cmd_flg = 0;
-    int background_flg = 0;
-    int first_token_recieved = 0;
-    int fg_cmd_flg = 0;
-    int bg_cmd_flg = 0;
-    int jobs_cmd_flg = 0;
+    int flgs = 0; // pipe_flg | overall_rdirect_flg | invalid_cmd_flg | background_flg | first_token_recieved | fg_cmd_flg | bg_cmd_flg | jobs_cmd_flg
 
     while ((token = strtok_r(NULL, " ", &the_rest)))
     {
-
         int its_r_p_b = special_token_checker(token);
-        if (!strcmp(token, "fg"))
+
+        if (!strcmp(token, "fg") || !strcmp(token, "bg") || !strcmp(token, "jobs"))
         {
-            if (fg_cmd_flg || bg_cmd_flg || jobs_cmd_flg)
+            int ret = fg_bg_jobs_flgs(flgs);
+            if (ret)
             {
-                invalid_cmd_flg = 1;
+                flgs = flgs | invalid_cmd_flg_msk;
                 break;
             }
-            if (first_token_recieved)
-            {
-                invalid_cmd_flg = 1;
-                break;
-            }
-            fg_cmd_flg = 1;
-            first_token_recieved = 1;
+            if (!strcmp(token, "fg"))
+                flgs = flgs | fg_cmd_flg_msk | first_token_recieved_msk;
+            if (!strcmp(token, "bg"))
+                flgs = flgs | bg_cmd_flg_msk | first_token_recieved_msk;
+            if (!strcmp(token, "jobs"))
+                flgs = flgs | jobs_cmd_flg_msk | first_token_recieved_msk;
+
             continue;
         }
-        if (!strcmp(token, "bg"))
-        {
-            if (fg_cmd_flg || bg_cmd_flg || jobs_cmd_flg)
-            {
-                invalid_cmd_flg = 1;
-                break;
-            }
-
-            if (first_token_recieved)
-            {
-                invalid_cmd_flg = 1;
-                break;
-            }
-            bg_cmd_flg = 1;
-            first_token_recieved = 1;
-            continue;
-        }
-        if (!strcmp(token, "jobs"))
-        {
-            if (fg_cmd_flg || bg_cmd_flg || jobs_cmd_flg)
-            {
-                invalid_cmd_flg = 1;
-                break;
-            }
-            if (first_token_recieved)
-            {
-                invalid_cmd_flg = 1;
-                break;
-            }
-            jobs_cmd_flg = 1;
-            first_token_recieved = 1;
-        }
-
         if (!its_r_p_b && parse_tracker != command_space[cmd_space_tracker].redirect_token_index) // check to see if token is not a special token
         {
             command_space[cmd_space_tracker].parsed_cmd[parse_tracker] = token;
-            first_token_recieved = 1;
+            flgs = flgs | first_token_recieved_msk;
         }
-        else if (!first_token_recieved && its_r_p_b) // if there has not been a valid first token and you recieve (>, <, 2>, &) cmd is auto invalid
+        else if (!(first_token_recieved_msk | flgs) && its_r_p_b) // if there has not been a valid first token and you recieve (>, <, 2>, &) cmd is auto invalid
         {
-            invalid_cmd_flg = 1;
+            flgs = flgs | invalid_cmd_flg_msk;
             break;
         }
         else
         {
             if (command_space[cmd_space_tracker].redirect_token_index == -1 && strcmp(token, "|") && strcmp(token, "&"))
             {
-                if (first_token_recieved)
+                if ((first_token_recieved_msk | flgs))
                 {
                     command_space[cmd_space_tracker].rdirect_filename = strtok_r(the_rest, " ", &the_rest);
-                    overall_rdirect_flg = 1;
+                    flgs = flgs | overall_rdirect_flg_msk;
+
                     if (!strcmp(token, "<"))
-                    {
                         command_space[cmd_space_tracker].rdirect_flg = 0;
-                    }
                     else if (!strcmp(token, ">"))
-                    {
                         command_space[cmd_space_tracker].rdirect_flg = 1;
-                    }
                     else if (!strcmp(token, "2>"))
-                    {
                         command_space[cmd_space_tracker].rdirect_flg = 2;
-                    }
                 }
             }
             else if (!strcmp(token, "|"))
             {
-                if (background_flg) // if you piped and have a & then thats an error
+                if ((background_flg_msk | flgs)) // if you piped and have a & then thats an error
                 {
-                    invalid_cmd_flg = 1;
+                    flgs = flgs | invalid_cmd_flg_msk;
                     break;
                 }
                 parse_tracker = -1;
-                pipe_flg = 1;
+                flgs = flgs | pipe_flg_msk;
                 command_space[cmd_space_tracker].pipe_flg = 1;
                 cmd_space_tracker++;
             }
             else if (!strcmp(token, "&"))
             {
-                background_flg = 1;
+                flgs = flgs | background_flg_msk;
                 command_space[cmd_space_tracker].bg_flg = 1;
             }
         }
-
         parse_tracker++;
-        // free(token);
     }
-
-    if (!invalid_cmd_flg && (fg_cmd_flg != 1 && bg_cmd_flg != 1 && jobs_cmd_flg != 1)) // checks if the invalid command flag was triggered
-    {
-        if (pipe_flg) // if theres is a pipe
-        {
-            int file_d[2];
-            if (pipe(file_d) == -1)
-            {
-                return;
-            }
-
-            int pid1 = fork();
-            if (pid1 < 0)
-            {
-                return;
-            }
-            if (!pid1)
-            {
-                // This is the left side of the command
-                dup2(file_d[1], STDOUT_FILENO);
-                close(file_d[0]);
-                close(file_d[1]);
-                execvp_call(command_space, overall_rdirect_flg, 0);
-            }
-
-            int pid2 = fork();
-            if (pid2 < 0)
-            {
-                return;
-            }
-            if (!pid2)
-            {
-                // This is the right side of the command
-                dup2(file_d[0], STDIN_FILENO);
-                close(file_d[0]);
-                close(file_d[1]);
-
-                execvp_call(command_space, overall_rdirect_flg, 1);
-            }
-
-            /*Proper Closing of File Descriptors*/
-            close(file_d[0]);
-            close(file_d[1]);
-            Job process = {.pid = pid2, .og_cmd = raw_cmd, .stack_id = history_value, .running = 1, .pstatus = 0};
-            waitpid(pid1, NULL, WUNTRACED);
-            if (background_flg && table_population < 20)
-            {
-
-                jobs_stack[table_population] = process;
-                table_population++;
-                history_value++;
-                waitpid(pid2, &process.pstatus, WNOHANG);
-            }
-            else
-            {
-                waitpid(pid2, &process.pstatus, WUNTRACED);
-                if (WIFSTOPPED(process.pstatus))
-                {
-                    jobs_stack[table_population] = process;
-                    recent_stop = table_population;
-                    table_population++;
-                    history_value++;
-                }
-            }
-        }
-        else // run command as normal
-        {
-            int pid = fork(); // this pid is the child
-            if (!pid)
-            {
-                execvp_call(command_space, overall_rdirect_flg, 0);
-                exit(0);
-            }
-            else
-            {
-                Job process = {.pid = pid, .og_cmd = raw_cmd, .stack_id = history_value, .running = 1, .pstatus = 0};
-                if (background_flg && table_population < 20)
-                {
-                    jobs_stack[table_population] = process;
-                    table_population++;
-                    history_value++;
-
-                    waitpid(pid, &process.pstatus, WNOHANG);
-                }
-                else
-                {
-                    waitpid(pid, &process.pstatus, WUNTRACED);
-                    if (WIFSTOPPED(process.pstatus))
-                    {
-                        process.running = 0;
-
-                        jobs_stack[table_population] = process;
-                        recent_stop = table_population;
-                        table_population++;
-                        history_value++;
-                    }
-                }
-            }
-        }
-    }
-    if (fg_cmd_flg)
-    {
-        fg_cmd();
-    }
-    else if (bg_cmd_flg)
-    {
-        bg_cmd();
-    }
-    else if (jobs_cmd_flg)
-    {
-        jobs_cmd();
-    }
+    execute_cmd(flgs, command_space, raw_cmd);
     free(cpy);
 }
 
@@ -406,7 +266,6 @@ void fg_cmd()
             table_population--;
         }
     }
-
     return;
 }
 
@@ -418,7 +277,6 @@ void bg_cmd()
         move_to_end(recent_stop);
         printf("[%d] + Running    %s\n", process.stack_id, process.og_cmd);
         kill(process.pid, SIGCONT);
-        // waitpid(process.pid, &process.pstatus, WNOHANG);
     }
 }
 
@@ -429,24 +287,16 @@ void jobs_cmd()
         if (i == (table_population - 1))
         {
             if (jobs_stack[i].running)
-            {
                 printf("[%d] + Running    %s\n", jobs_stack[i].stack_id, jobs_stack[i].og_cmd);
-            }
             else
-            {
                 printf("[%d] + Stopped    %s\n", jobs_stack[i].stack_id, jobs_stack[i].og_cmd);
-            }
         }
         else
         {
             if (jobs_stack[i].running)
-            {
                 printf("[%d] - Running    %s\n", jobs_stack[i].stack_id, jobs_stack[i].og_cmd);
-            }
             else
-            {
                 printf("[%d] - Stopped    %s\n", jobs_stack[i].stack_id, jobs_stack[i].og_cmd);
-            }
         }
     }
 }
@@ -502,6 +352,124 @@ void move_to_end(int index)
     }
 }
 
-void execute_cmd()
+void execute_cmd(int flgs, Command cmds[], char *raw_cmd)
 {
+    if (!(flgs & invalid_cmd_flg_msk) && !(flgs & fg_cmd_flg_msk) && !(flgs & bg_cmd_flg_msk) && !(flgs & jobs_cmd_flg_msk)) // checks if the invalid command flag was triggered
+    {
+        if (flgs & pipe_flg_msk) // if theres is a pipe
+        {
+            int file_d[2];
+            if (pipe(file_d) == -1)
+            {
+                return;
+            }
+
+            int pid1 = fork();
+            if (pid1 < 0)
+            {
+                return;
+            }
+            if (!pid1)
+            {
+                // This is the left side of the command
+                dup2(file_d[1], STDOUT_FILENO);
+                close(file_d[0]);
+                close(file_d[1]);
+                execvp_call(cmds, (overall_rdirect_flg_msk & flgs), 0);
+            }
+
+            int pid2 = fork();
+            if (pid2 < 0)
+            {
+                return;
+            }
+            if (!pid2)
+            {
+                // This is the right side of the command
+                dup2(file_d[0], STDIN_FILENO);
+                close(file_d[0]);
+                close(file_d[1]);
+
+                execvp_call(cmds, (overall_rdirect_flg_msk & flgs), 1);
+            }
+
+            /*Proper Closing of File Descriptors*/
+            close(file_d[0]);
+            close(file_d[1]);
+            Job process = {.pid = pid2, .og_cmd = raw_cmd, .stack_id = history_value, .running = 1, .pstatus = 0};
+            waitpid(pid1, NULL, WUNTRACED);
+            if ((flgs & background_flg_msk) && table_population < 20)
+            {
+
+                jobs_stack[table_population] = process;
+                table_population++;
+                history_value++;
+                waitpid(pid2, &process.pstatus, WNOHANG);
+            }
+            else
+            {
+                waitpid(pid2, &process.pstatus, WUNTRACED);
+                if (WIFSTOPPED(process.pstatus))
+                {
+                    jobs_stack[table_population] = process;
+                    recent_stop = table_population;
+                    table_population++;
+                    history_value++;
+                }
+            }
+        }
+        else // run command as normal
+        {
+            int pid = fork(); // this pid is the child
+            if (!pid)
+            {
+                execvp_call(cmds, (overall_rdirect_flg_msk & flgs), 0);
+                exit(0);
+            }
+            else
+            {
+                Job process = {.pid = pid, .og_cmd = raw_cmd, .stack_id = history_value, .running = 1, .pstatus = 0};
+                if ((flgs & background_flg_msk) && table_population < 20)
+                {
+                    jobs_stack[table_population] = process;
+                    table_population++;
+                    history_value++;
+
+                    waitpid(pid, &process.pstatus, WNOHANG);
+                }
+                else
+                {
+                    waitpid(pid, &process.pstatus, WUNTRACED);
+                    if (WIFSTOPPED(process.pstatus))
+                    {
+                        process.running = 0;
+
+                        jobs_stack[table_population] = process;
+                        recent_stop = table_population;
+                        table_population++;
+                        history_value++;
+                    }
+                }
+            }
+        }
+    }
+    if (flgs & fg_cmd_flg_msk)
+        fg_cmd();
+    else if (flgs & bg_cmd_flg_msk)
+        bg_cmd();
+    else if (jobs_cmd_flg_msk & flgs)
+        jobs_cmd();
+}
+
+int fg_bg_jobs_flgs(int flgs)
+{
+    if ((flgs & fg_cmd_flg_msk) || (flgs & bg_cmd_flg_msk) || (flgs & jobs_cmd_flg_msk))
+    {
+        return 1;
+    }
+    if (flgs & first_token_recieved_msk)
+    {
+        return 1;
+    }
+    return 0;
 }
