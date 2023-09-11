@@ -250,18 +250,25 @@ void fg_cmd(Job *jobs)
 {
     if (table_population > 0)
     {
-        Job top_stack = jobs[table_population - 1];
-        int ts_pid = top_stack.pid;
+        Job *top_stack = &jobs[table_population - 1];
+        int ts_pid = top_stack->pid;
 
         kill(ts_pid, SIGCONT);
-        int val = waitpid(ts_pid, &top_stack.pstatus, WUNTRACED);
-        if (WIFEXITED(top_stack.pstatus))
+        top_stack->running = 1;
+        int val = waitpid(ts_pid, &top_stack->pstatus, WUNTRACED);
+
+        printf("Stopped ret: %d", WIFSTOPPED(top_stack->pstatus));
+        if (WIFSTOPPED(top_stack->pstatus))
         {
-            printf("[%d] + Done    %s\n", top_stack.stack_id, top_stack.og_cmd);
+            top_stack->running = 0;
+        }
+        else if (WIFEXITED(top_stack->pstatus))
+        {
+            printf("[%d] + Done    %s\n", top_stack->stack_id, top_stack->og_cmd);
             table_population--;
         }
     }
-    return;
+    // return;
 }
 
 void bg_cmd(Job *jobs)
