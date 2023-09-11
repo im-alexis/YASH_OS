@@ -275,7 +275,7 @@ void bg_cmd(Job *jobs)
             jobs[rs_index].running = 1;
             printf("[%d] + Running    %s \n", process.stack_id, process.og_cmd);
             kill(process.pid, SIGCONT);
-            move_to_end(rs_index, jobs);
+            // move_to_end(rs_index, jobs);
         }
     }
 }
