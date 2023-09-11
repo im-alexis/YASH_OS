@@ -26,7 +26,7 @@ void parse_command(char *raw_cmd, Job *jobs);
 
 int special_token_checker(char *token);
 
-void execvp_call(Command cs[], int ord, int index);
+int execvp_call(Command cs[], int ord, int index);
 
 int file_redirection(Command cmds[], int index);
 

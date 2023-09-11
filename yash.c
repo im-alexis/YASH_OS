@@ -42,6 +42,32 @@ typedef struct Job
     int bg_flg;
 } Job;
 
+void handle_signal(int signal);
+
+void parse_command(char *raw_cmd, Job *jobs);
+
+int special_token_checker(char *token);
+
+int execvp_call(Command cs[], int ord, int index);
+
+int file_redirection(Command cmds[], int index);
+
+void fg_cmd(Job *jobs);
+
+void bg_cmd(Job *jobs);
+
+void jobs_cmd(Job *jobs);
+
+void clean_stack(int mode, Job *jobs);
+
+void move_to_end(int index, Job *jobs);
+
+void execute_cmd(int flgs, Command cmds[], char *raw_cmd, Job *Jobs);
+
+int fg_bg_jobs_flgs(int flgs);
+
+int index_of_pid(int id, Job *jobs);
+
 void handle_signal(int signal)
 {
     switch (signal)
@@ -54,6 +80,12 @@ void handle_signal(int signal)
         break;
     }
     return;
+}
+int special_token_checker(char *token)
+{
+    if (strcmp(token, ">") && strcmp(token, "<") && strcmp(token, "2>") && strcmp(token, "|") && strcmp(token, "&"))
+        return 0;
+    return 1;
 }
 
 void parse_command(char *raw_cmd, Job *jobs)
@@ -158,13 +190,6 @@ void parse_command(char *raw_cmd, Job *jobs)
     }
     execute_cmd(flgs, command_space, raw_cmd, jobs);
     free(cpy);
-}
-
-int special_token_checker(char *token)
-{
-    if (strcmp(token, ">") && strcmp(token, "<") && strcmp(token, "2>") && strcmp(token, "|") && strcmp(token, "&"))
-        return 0;
-    return 1;
 }
 
 int execvp_call(Command cs[], int ord, int index)
@@ -363,7 +388,7 @@ void execute_cmd(int flgs, Command cmds[], char *raw_cmd, Job *jobs)
                 close(file_d[0]);
                 close(file_d[1]);
                 int val = execvp_call(cmds, (overall_rdirect_flg_msk & flgs), 0);
-                if (val = -1)
+                if (val == -1)
                 {
                     exit(0);
                 }
@@ -382,7 +407,7 @@ void execute_cmd(int flgs, Command cmds[], char *raw_cmd, Job *jobs)
                 close(file_d[1]);
 
                 int val = execvp_call(cmds, (overall_rdirect_flg_msk & flgs), 1);
-                if (val = -1)
+                if (val == -1)
                 {
 
                     exit(0);
@@ -410,7 +435,7 @@ void execute_cmd(int flgs, Command cmds[], char *raw_cmd, Job *jobs)
                 {
                     jobs[table_population] = process;
                     recent_stop = process.stack_id;
-                    process.running == 0;
+                    process.running = 0;
                     table_population++;
                     history_value++;
                 }
@@ -422,7 +447,7 @@ void execute_cmd(int flgs, Command cmds[], char *raw_cmd, Job *jobs)
             if (!pid)
             {
                 int val = execvp_call(cmds, (overall_rdirect_flg_msk & flgs), 0);
-                if (val = -1)
+                if (val == -1)
                 {
 
                     exit(0);
