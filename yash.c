@@ -7,6 +7,7 @@
 #include <signal.h>
 #include <sys/wait.h>
 #include <stdlib.h>
+// #include "yash.h"
 
 #define pipe_flg_msk 0x0001
 #define overall_rdirect_flg_msk 0x0002
@@ -44,9 +45,9 @@ typedef struct Job
     int running; // 0 stopped or 1 running
     int pstatus;
     char *og_cmd;
+    int bg_flg;
 } Job;
 
-Job jobs_stack[20];
 int table_population;
 int history_value;
 int recent_stop;
@@ -76,31 +77,33 @@ int main()
     table_population = 0;
     history_value = 1;
     recent_stop = -1;
+    Job jobs_stack[20];
+    // jobs_stack = malloc(sizeof(Job) * 20);
 
     signal(SIGINT, handle_signal);  // ctrl-c
     signal(SIGTSTP, handle_signal); // ctrl-z
     signal(SIGCHLD, handle_signal);
-    signal(SIGQUIT, handle_signal); // ctrl-d
+    // signal(SIGQUIT, handle_signal); // ctrl-d
     signal(SIGTTOU, handle_signal);
 
     while (1)
     {
-        clean_stack(); // periodic call to stack clean up
+        clean_stack(0, jobs_stack); // periodic call to stack clean up
         command = readline("# ");
-        clean_stack(); // periodic call to stack clean up
-        if (command != EOF)
+        if (!command)
         {
-            if (strlen(command) > 0)
-            {
-                add_history(command);
-            }
-            parse_command(command);
+            break;
         }
+        if (strlen(command) > 0)
+            add_history(command);
+        parse_command(command, jobs_stack);
     }
+
+    printf("\n");
     return 0;
 }
 
-void parse_command(char *raw_cmd)
+void parse_command(char *raw_cmd, Job *jobs)
 {
     Command command_space[2] = {
         {.parsed_cmd = NULL, .rdirect_filename = NULL, .pipe_flg = 0, .rdirect_flg = -1, .redirect_fd = -1, .redirect_token_index = -1, .bg_flg = 0},
@@ -184,7 +187,7 @@ void parse_command(char *raw_cmd)
         }
         parse_tracker++;
     }
-    execute_cmd(flgs, command_space, raw_cmd);
+    execute_cmd(flgs, command_space, raw_cmd, jobs);
     free(cpy);
 }
 
@@ -255,16 +258,16 @@ void file_redirection(Command cmds[], int index)
     }
 }
 
-void fg_cmd()
+void fg_cmd(Job *jobs)
 {
     if (table_population > 0)
     {
-        Job top_stack = jobs_stack[table_population - 1];
+        Job top_stack = jobs[table_population - 1];
         int ts_pid = top_stack.pid;
 
         kill(ts_pid, SIGCONT);
         int val = waitpid(ts_pid, &top_stack.pstatus, WUNTRACED);
-        if (val > 0)
+        if (WIFEXITED(top_stack.pstatus))
         {
             printf("[%d] + Done    %s\n", top_stack.stack_id, top_stack.og_cmd);
             table_population--;
@@ -273,61 +276,98 @@ void fg_cmd()
     return;
 }
 
-void bg_cmd()
+void bg_cmd(Job *jobs)
 {
     if (recent_stop != -1)
     {
-        Job process = jobs_stack[recent_stop];
-        move_to_end(recent_stop);
-        printf("[%d] + Running    %s\n", process.stack_id, process.og_cmd);
-        kill(process.pid, SIGCONT);
+        int rs_index = index_of_pid(recent_stop, jobs);
+        if (rs_index != -1)
+        {
+            Job process = jobs[rs_index];
+            jobs[rs_index].running = 1;
+            printf("[%d] + Running    %s \n", process.stack_id, process.og_cmd);
+            // printf("PID: %d | Running Status: %d | Stack ID: %d\n", process.pid, process.running, process.stack_id);
+            kill(process.pid, SIGCONT);
+            // printf("Sent %d a SIGCONT\n", process.pid);
+            //  waitpid(process.pid, &process.pstatus, WNOHANG);
+            move_to_end(rs_index, jobs);
+        }
     }
 }
 
-void jobs_cmd()
+void jobs_cmd(Job *jobs)
 {
+
+    clean_stack(1, jobs);
     for (int i = 0; i < table_population; i++)
     {
+        Job process = jobs[i];
+        // printf("PID: %d | Running Status: %d | Stack ID: %d\n", process.pid, process.running, process.stack_id);
         if (i == (table_population - 1))
         {
-            if (jobs_stack[i].running)
-                printf("[%d] + Running    %s\n", jobs_stack[i].stack_id, jobs_stack[i].og_cmd);
+            if (jobs[i].running == 1)
+                printf("[%d] + Running    %s\n", jobs[i].stack_id, jobs[i].og_cmd);
             else
-                printf("[%d] + Stopped    %s\n", jobs_stack[i].stack_id, jobs_stack[i].og_cmd);
+                printf("[%d] + Stopped    %s\n", jobs[i].stack_id, jobs[i].og_cmd);
         }
         else
         {
-            if (jobs_stack[i].running)
-                printf("[%d] - Running    %s\n", jobs_stack[i].stack_id, jobs_stack[i].og_cmd);
+            if (jobs[i].running == 1)
+                printf("[%d] - Running    %s\n", jobs[i].stack_id, jobs[i].og_cmd);
             else
-                printf("[%d] - Stopped    %s\n", jobs_stack[i].stack_id, jobs_stack[i].og_cmd);
+                printf("[%d] - Stopped    %s\n", jobs[i].stack_id, jobs[i].og_cmd);
         }
     }
 }
 
-void clean_stack()
+void clean_stack(int mode, Job *Jobs)
 {
+
+    // Mode 0 for when clean_stack is called from main
+    // Mode 1 for when clean stecks is called from jobs cmd
+
     Job tmp[20];
     int temp_index = 0;
     int rm_val = 0;
+    // if (mode)
+    //     printf("Called clean_stack(), from jobs\n");
+    // else
+    //     printf("Called clean_stack(), from main\n");
+    // printf("Table Population: %d\n", table_population);
     for (int i = 0; i < table_population; i++)
     {
-        Job process = jobs_stack[i];
+
+        Job process = Jobs[i];
         int val = waitpid(process.pid, &process.pstatus, WNOHANG);
-        if (val > 0)
+        printf("Pid: %d | Background Flag: %d | FOR LOOP INDEX: %d | waitpid returned: %d \n", process.pid, process.bg_flg, i, process.pstatus);
+        // if (WIFEXITED(process.pstatus))
+        // {
+        //     printf("Child process exited with status %d\n", WEXITSTATUS(process.pstatus));
+        // }
+        // else
+        // {
+        //     printf("Child process terminated abnormally.\n");
+        // }
+
+        if (WIFEXITED(process.pstatus) && mode == 1 && process.bg_flg == 1)
         {
-            printf("[%d] + Done    %s\n ", process.stack_id, process.og_cmd);
+            printf("[%d] + Done    %s\n", process.stack_id, process.og_cmd);
+            rm_val++;
+        }
+        else if (WIFEXITED(process.pstatus) && mode == 0 && process.bg_flg == 0)
+        {
+            printf("[%d] + Done    %s\n", process.stack_id, process.og_cmd);
             rm_val++;
         }
         else
         {
-            tmp[temp_index] = jobs_stack[i];
+            tmp[temp_index] = Jobs[i];
             temp_index++;
         }
     }
     for (int i = 0; i < table_population; i++)
     {
-        jobs_stack[i] = tmp[i];
+        Jobs[i] = tmp[i];
     }
     table_population = table_population - rm_val;
     if (table_population == 0)
@@ -336,7 +376,7 @@ void clean_stack()
     }
 }
 
-void move_to_end(int index)
+void move_to_end(int index, Job *jobs)
 {
     if (index != (table_population - 1))
     {
@@ -345,20 +385,20 @@ void move_to_end(int index)
         {
             if (index != i)
             {
-                tmp[i] = jobs_stack[i];
+                tmp[i] = jobs[i];
             }
         }
-        tmp[table_population - 1] = jobs_stack[index];
+        tmp[table_population - 1] = jobs[index];
         for (int i = 0; i < table_population; i++)
         {
-            jobs_stack[i] = tmp[i];
+            jobs[i] = tmp[i];
         }
     }
 }
 
-void execute_cmd(int flgs, Command cmds[], char *raw_cmd)
+void execute_cmd(int flgs, Command cmds[], char *raw_cmd, Job *Jobs)
 {
-    if (!(flgs & invalid_cmd_flg_msk) && !(flgs & fg_cmd_flg_msk) && !(flgs & bg_cmd_flg_msk) && !(flgs & jobs_cmd_flg_msk)) // checks if the invalid command flag was triggered
+    if (!(flgs & invalid_cmd_flg_msk) && !(flgs & fg_cmd_flg_msk) && !(flgs & bg_cmd_flg_msk) && !(flgs & jobs_cmd_flg_msk) && table_population < 20) // checks if the invalid command flag was triggered and if there is space
     {
         if (flgs & pipe_flg_msk) // if theres is a pipe
         {
@@ -400,14 +440,15 @@ void execute_cmd(int flgs, Command cmds[], char *raw_cmd)
             /*Proper Closing of File Descriptors*/
             close(file_d[0]);
             close(file_d[1]);
-            Job process = {.pid = pid2, .og_cmd = raw_cmd, .stack_id = history_value, .running = 1, .pstatus = 0};
+            Job process = {.pid = pid2, .og_cmd = raw_cmd, .stack_id = history_value, .running = 1, .pstatus = 0, .bg_flg = 0};
             waitpid(pid1, NULL, WUNTRACED);
-            if ((flgs & background_flg_msk) && table_population < 20)
+            if ((flgs & background_flg_msk))
             {
 
-                jobs_stack[table_population] = process;
+                Jobs[table_population] = process;
                 table_population++;
                 history_value++;
+                process.bg_flg = 1;
                 waitpid(pid2, &process.pstatus, WNOHANG);
             }
             else
@@ -415,8 +456,9 @@ void execute_cmd(int flgs, Command cmds[], char *raw_cmd)
                 waitpid(pid2, &process.pstatus, WUNTRACED);
                 if (WIFSTOPPED(process.pstatus))
                 {
-                    jobs_stack[table_population] = process;
-                    recent_stop = table_population;
+                    Jobs[table_population] = process;
+                    recent_stop = process.stack_id;
+                    process.running == 0;
                     table_population++;
                     history_value++;
                 }
@@ -432,13 +474,14 @@ void execute_cmd(int flgs, Command cmds[], char *raw_cmd)
             }
             else
             {
-                Job process = {.pid = pid, .og_cmd = raw_cmd, .stack_id = history_value, .running = 1, .pstatus = 0};
+                Job process = {.pid = pid, .og_cmd = raw_cmd, .stack_id = history_value, .running = 1, .pstatus = 0, .bg_flg = 0};
                 if ((flgs & background_flg_msk) && table_population < 20)
                 {
-                    jobs_stack[table_population] = process;
+                    process.bg_flg = 1;
+                    Jobs[table_population] = process;
                     table_population++;
                     history_value++;
-
+                    process.bg_flg = 1;
                     waitpid(pid, &process.pstatus, WNOHANG);
                 }
                 else
@@ -447,9 +490,8 @@ void execute_cmd(int flgs, Command cmds[], char *raw_cmd)
                     if (WIFSTOPPED(process.pstatus))
                     {
                         process.running = 0;
-
-                        jobs_stack[table_population] = process;
-                        recent_stop = table_population;
+                        Jobs[table_population] = process;
+                        recent_stop = process.stack_id;
                         table_population++;
                         history_value++;
                     }
@@ -458,11 +500,11 @@ void execute_cmd(int flgs, Command cmds[], char *raw_cmd)
         }
     }
     if (flgs & fg_cmd_flg_msk)
-        fg_cmd();
+        fg_cmd(Jobs);
     else if (flgs & bg_cmd_flg_msk)
-        bg_cmd();
+        bg_cmd(Jobs);
     else if (jobs_cmd_flg_msk & flgs)
-        jobs_cmd();
+        jobs_cmd(Jobs);
 }
 
 int fg_bg_jobs_flgs(int flgs)
@@ -476,4 +518,16 @@ int fg_bg_jobs_flgs(int flgs)
         return 1;
     }
     return 0;
+}
+
+int index_of_pid(int id, Job *jobs)
+{
+    for (int i = 0; i < table_population; i++)
+    {
+        if (id == jobs[i].stack_id)
+        {
+            return i;
+        }
+    }
+    return -1;
 }
