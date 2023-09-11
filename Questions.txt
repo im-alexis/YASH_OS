@@ -1,3 +1,0 @@
-Ctrl-D has a seg fault at my string length check
-
-Background jobs that where originally background should stay in stack until jobs 

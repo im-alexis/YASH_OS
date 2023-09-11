@@ -1,23 +1,15 @@
+#ifndef YASH_H
+#define YASH_H
 
-typedef struct FileRedirection
-{
-    char *STDIN_FILE;
-    char *STDOUT_FILE;
-    char *STDERR_FILE;
-    int rdirect_flgs; // b[0] (<) STDIN, b[1] (>) STDOUT, b[2] (2>) STDERR
-    int redirect_token_index;
-    int redirect_fd;
-} FileRedirection;
 typedef struct Command
 {
     char *parsed_cmd[15];
-    char *rdirect_filename;
-    int pipe_flg;    // 0 no pipe, 1 pipe
-    int rdirect_flg; // 0 (<) STDIN, 1 (>) STDOUT, 2 (2>) STDERR, -1 NO Modification
-    int redirect_token_index;
-    int redirect_fd;
+    char *STDIN_FILE;
+    char *STDOUT_FILE;
+    char *STDERR_FILE;
+    int rdirect_flgs; // // b[0] (<) STDIN, b[1] (>) STDOUT, b[2] (2>) STDERR
+    int pipe_flg;     // 0 no pipe, 1 pipe
     int bg_flg;
-    FileRedirection files;
 } Command;
 typedef struct Job
 {
@@ -28,29 +20,30 @@ typedef struct Job
     char *og_cmd;
     int bg_flg;
 } Job;
+void handle_signal(int signal);
 
-void parse_command(char *raw_cmd);
-
-int isValidExecCmd(char *cmd_tok);
+void parse_command(char *raw_cmd, Job *jobs);
 
 int special_token_checker(char *token);
 
 void execvp_call(Command cs[], int ord, int index);
 
-void file_redirection(Command cmds[], int index);
+int file_redirection(Command cmds[], int index);
 
-void handle_signal(int signal);
+void fg_cmd(Job *jobs);
 
-void fg_cmd();
+void bg_cmd(Job *jobs);
 
-void bg_cmd();
+void jobs_cmd(Job *jobs);
 
-void jobs_cmd();
+void clean_stack(int mode, Job *jobs);
 
-void clean_stack(int mode);
+void move_to_end(int index, Job *jobs);
 
-void execute_cmd(int flgs, Command cmds[], char *raw_cmd);
-
-void move_to_end(int index);
+void execute_cmd(int flgs, Command cmds[], char *raw_cmd, Job *Jobs);
 
 int fg_bg_jobs_flgs(int flgs);
+
+int index_of_pid(int id, Job *jobs);
+
+#endif
