@@ -200,14 +200,11 @@ int execvp_call(Command cs[], int ord, int index)
     {
         int val = file_redirection(cs, index);
         if (val == -1)
-        {
             return -1;
-        }
     }
+
     if (execvp(cs[index].parsed_cmd[0], cs[index].parsed_cmd) == -1)
-    {
         perror("exec");
-    }
     return 0;
 }
 
@@ -252,12 +249,9 @@ void fg_cmd(Job *jobs)
     {
         Job *top_stack = &jobs[table_population - 1];
         int ts_pid = top_stack->pid;
-
         kill(ts_pid, SIGCONT);
         top_stack->running = 1;
         int val = waitpid(ts_pid, &top_stack->pstatus, WUNTRACED);
-
-        printf("Stopped ret: %d", WIFSTOPPED(top_stack->pstatus));
         if (WIFSTOPPED(top_stack->pstatus))
         {
             top_stack->running = 0;
@@ -268,7 +262,6 @@ void fg_cmd(Job *jobs)
             table_population--;
         }
     }
-    // return;
 }
 
 void bg_cmd(Job *jobs)
@@ -324,7 +317,6 @@ void clean_stack(int mode, Job *jobs)
 
         Job process = jobs[i];
         int val = waitpid(process.pid, &process.pstatus, WNOHANG);
-        // printf("(WIFEXITED = %d | PID: %d | Stack_id: %d | PStatus: %d | Status: %d \n", WIFEXITED(process.pstatus), process.pid, process.stack_id, process.pstatus, process.running);
         if (val != 0 && mode == 1 && process.bg_flg == 1)
         {
             printf("[%d] + Done    %s\n", process.stack_id, process.og_cmd);
@@ -380,14 +372,11 @@ void execute_cmd(int flgs, Command cmds[], char *raw_cmd, Job *jobs)
         {
             int file_d[2];
             if (pipe(file_d) == -1)
-            {
                 return;
-            }
             int pid1 = fork();
+
             if (pid1 < 0)
-            {
                 return;
-            }
             if (!pid1)
             {
                 // This is the left side of the command
@@ -396,16 +385,13 @@ void execute_cmd(int flgs, Command cmds[], char *raw_cmd, Job *jobs)
                 close(file_d[1]);
                 int val = execvp_call(cmds, (overall_rdirect_flg_msk & flgs), 0);
                 if (val == -1)
-                {
                     exit(0);
-                }
             }
 
             int pid2 = fork();
             if (pid2 < 0)
-            {
                 return;
-            }
+
             if (!pid2)
             {
                 // This is the right side of the command
@@ -415,10 +401,7 @@ void execute_cmd(int flgs, Command cmds[], char *raw_cmd, Job *jobs)
 
                 int val = execvp_call(cmds, (overall_rdirect_flg_msk & flgs), 1);
                 if (val == -1)
-                {
-
                     exit(0);
-                }
             }
 
             /*Proper Closing of File Descriptors*/
@@ -455,10 +438,7 @@ void execute_cmd(int flgs, Command cmds[], char *raw_cmd, Job *jobs)
             {
                 int val = execvp_call(cmds, (overall_rdirect_flg_msk & flgs), 0);
                 if (val == -1)
-                {
-
                     exit(0);
-                }
             }
             else
             {
@@ -498,13 +478,9 @@ void execute_cmd(int flgs, Command cmds[], char *raw_cmd, Job *jobs)
 int fg_bg_jobs_flgs(int flgs)
 {
     if ((flgs & fg_cmd_flg_msk) || (flgs & bg_cmd_flg_msk) || (flgs & jobs_cmd_flg_msk))
-    {
         return 1;
-    }
     if (flgs & first_token_recieved_msk)
-    {
         return 1;
-    }
     return 0;
 }
 
@@ -513,9 +489,7 @@ int index_of_pid(int id, Job *jobs)
     for (int i = 0; i < table_population; i++)
     {
         if (id == jobs[i].stack_id)
-        {
             return i;
-        }
     }
     return -1;
 }
@@ -537,9 +511,7 @@ int main()
         clean_stack(0, jobs_stack); // periodic call to stack clean up
         command = readline("# ");
         if (!command)
-        {
             break;
-        }
         if (strlen(command) > 0)
             add_history(command);
         parse_command(command, jobs_stack);
